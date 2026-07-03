@@ -2880,11 +2880,6 @@ function normalizeCloudflareAiGatewayRestBaseUrl(baseUrl: string | undefined): s
 		: CLOUDFLARE_AI_GATEWAY_FALLBACK_BASE_URL;
 }
 
-function buildCloudflareAiGatewayHeaders(): Record<string, string> | undefined {
-	const gatewayId = getCloudflareAiGatewayGatewayId();
-	return gatewayId ? { "cf-aig-gateway-id": gatewayId } : undefined;
-}
-
 function mapCloudflareAiGatewayWireApi(modelId: string): Api {
 	const normalized = modelId.trim().toLowerCase();
 	if (normalized.startsWith("anthropic/") || normalized.startsWith("claude-") || normalized.startsWith("claude.")) {
@@ -2908,14 +2903,23 @@ function isCloudflareLegacyBaseUrl(url: string | undefined): boolean {
 
 function remapCloudflareAiGatewayModel<TApi extends Api>(model: ModelSpec<TApi>, baseUrl: string): ModelSpec<Api> {
 	const legacy = isCloudflareLegacyBaseUrl(baseUrl);
+	const resolvedBaseUrl = baseUrl.replace(/\/+$/, "");
 	const requestModelId = legacy ? model.id : mapCloudflareAiGatewayRequestModelId(model.id);
-	const headers = legacy ? undefined : buildCloudflareAiGatewayHeaders();
+	const { headers: modelHeaders, ...modelWithoutHeaders } = model;
+	// Per-model `headers.cf-aig-gateway-id` wins over env-derived id; the env
+	// id is only consulted in REST mode (legacy endpoints take the gateway id
+	// in the URL path, so no header is injected). The hardcoded default keeps
+	// the header non-empty for REST even when nothing is configured.
+	const modelGatewayId = modelHeaders?.["cf-aig-gateway-id"]?.trim();
+	const envGatewayId = legacy ? undefined : getCloudflareAiGatewayGatewayId();
+	const gatewayId = modelGatewayId || envGatewayId || CLOUDFLARE_AI_GATEWAY_DEFAULT_GATEWAY_ID;
+	const headers = legacy ? undefined : { ...(modelHeaders ?? {}), "cf-aig-gateway-id": gatewayId };
 	return {
-		...model,
+		...modelWithoutHeaders,
 		api: mapCloudflareAiGatewayWireApi(requestModelId),
-		baseUrl: baseUrl.replace(/\/+$/, ""),
+		baseUrl: resolvedBaseUrl,
 		...(requestModelId !== model.id ? { requestModelId } : {}),
-		...(headers ? { headers: { ...(model.headers ?? {}), ...headers } } : {}),
+		...(headers ? { headers } : {}),
 	};
 }
 
