@@ -56,7 +56,8 @@ const CLOUDFLARE_ANTHROPIC_MODEL: Model<"anthropic-messages"> = buildModel({
 	id: "anthropic/claude-sonnet-4-5",
 	name: "Claude Sonnet 4.5 via Cloudflare",
 	provider: "cloudflare-ai-gateway",
-	baseUrl: "https://gateway.ai.cloudflare.com/v1/account/gateway/anthropic",
+	baseUrl: "https://api.cloudflare.com/client/v4/accounts/account/ai/v1",
+	headers: { "cf-aig-gateway-id": "gateway" },
 });
 
 const UMANS_ANTHROPIC_MODEL: Model<"anthropic-messages"> = buildModel({
@@ -1603,44 +1604,46 @@ describe("Anthropic request fingerprint alignment", () => {
 		);
 	});
 
-	it("uses Cloudflare AI Gateway authorization without Anthropic credential headers", () => {
+	it("uses standard bearer auth for Cloudflare AI Gateway REST Anthropic calls", () => {
 		const options = buildAnthropicClientOptions({
 			model: CLOUDFLARE_ANTHROPIC_MODEL,
-			apiKey: "cf-gateway-token",
+			apiKey: "cf-rest-token",
 			extraBetas: [],
 			stream: true,
 			interleavedThinking: false,
 			dynamicHeaders: {},
 		});
 
-		expect(options.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/account/gateway/anthropic");
+		expect(options.baseURL).toBe("https://api.cloudflare.com/client/v4/accounts/account/ai");
 		expect(options.apiKey).toBeNull();
-		expect(options.authToken).toBeNull();
-		expect(options.defaultHeaders["cf-aig-authorization"]).toBe("Bearer cf-gateway-token");
-		expect(options.defaultHeaders.Authorization).toBeUndefined();
+		expect(options.authToken).toBeUndefined();
+		expect(options.defaultHeaders.Authorization).toBe("Bearer cf-rest-token");
+		expect(options.defaultHeaders["cf-aig-gateway-id"]).toBe("gateway");
+		expect(options.defaultHeaders["cf-aig-authorization"]).toBeUndefined();
 		expect(options.defaultHeaders["X-Api-Key"]).toBeUndefined();
 	});
 
-	it("keeps Cloudflare gateway auth authoritative over caller-supplied auth headers", () => {
+	it("keeps caller-supplied gateway headers while dropping stale credential headers", () => {
 		const options = buildAnthropicClientOptions({
 			model: {
 				...CLOUDFLARE_ANTHROPIC_MODEL,
 				headers: {
-					Authorization: "Bearer anthropic-oauth",
+					Authorization: "Bearer stale-auth",
 					"X-Api-Key": "sk-ant-api-leak",
-					"cf-aig-authorization": "Bearer stale-token",
+					"cf-aig-gateway-id": "custom-gateway",
 				},
 			},
-			apiKey: "cf-gateway-token",
+			apiKey: "cf-rest-token",
 			extraBetas: [],
 			stream: true,
 			interleavedThinking: false,
 			dynamicHeaders: {},
 		});
 
-		expect(options.defaultHeaders["cf-aig-authorization"]).toBe("Bearer cf-gateway-token");
-		expect(options.defaultHeaders.Authorization).toBeUndefined();
-		expect(options.defaultHeaders["X-Api-Key"]).toBeUndefined();
+		expect(options.defaultHeaders.Authorization).toBe("Bearer stale-auth");
+		expect(options.defaultHeaders["cf-aig-gateway-id"]).toBe("custom-gateway");
+		expect(options.defaultHeaders["cf-aig-authorization"]).toBeUndefined();
+		expect(options.defaultHeaders["X-Api-Key"]).toBe("sk-ant-api-leak");
 	});
 
 	it("applies Claude Code TLS profile for direct Anthropic transport", () => {
