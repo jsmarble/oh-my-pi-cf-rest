@@ -15,6 +15,10 @@
 ### Fixed
 
 - Fixed Anthropic OAuth account rotation to exclude unreliable model-scoped Fable/Mythos weekly caps from proactive hard-blocking, ensuring they act only as ranking priority hints while still allowing reactive 429-fallback to rotate and reach serviceable siblings.
+### Added
+
+- Added `LegacyCloudflareTokenError` to the error module (`packages/ai/src/error/auth.ts`), classified as `Flag.AuthFailed`. The cloudflare-ai-gateway login flow now rejects legacy `cf-aig-…` tokens up front instead of silently accepting them and failing with 401 at request time.
+
 
 ## [16.3.3] - 2026-07-02
 

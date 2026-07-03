@@ -17,6 +17,19 @@
 
 - Updated priority ordering to include Baseten
 - Updated pricing and limits for various existing models in the catalog
+### Added
+
+- Added Cloudflare AI Gateway REST API support via `api.cloudflare.com`, replacing the legacy `gateway.ai.cloudflare.com` provider-native endpoints. Models are auto-classified (Anthropic-family → `anthropic-messages`, everything else → `openai-completions`). Auth: standard `Authorization: Bearer` header. Gateway selection via `cf-aig-gateway-id` header with env, models.yml per-model, and hardcoded `"default"` precedence. Legacy `gateway.ai.cloudflare.com` baseUrls continue to work via the compat shim.
+- Added `LegacyCloudflareTokenError` in the login flow to reject legacy `cf-aig-…` tokens at login time with an actionable error message pointing to the legacy baseUrl config.
+
+### Changed
+
+- Migrated bundled `cloudflare-ai-gateway` catalog entries from legacy `gateway.ai.cloudflare.com` baseUrl to Cloudflare REST API (`api.cloudflare.com/client/v4/accounts/<account>/ai/v1`).
+
+### Fixed
+
+- Restored `cf-aig-authorization` authentication path for legacy `gateway.ai.cloudflare.com` baseUrls, preventing 401 errors for users with existing Cloudflare AI Gateway configurations.
+
 
 ## [16.3.3] - 2026-07-02
 

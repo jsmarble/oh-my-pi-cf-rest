@@ -39,9 +39,26 @@ Standard `Authorization: Bearer` header — same as OpenAI or Anthropic native. 
 
 ## Gateway Selection
 
-The `cf-aig-gateway-id` header selects which gateway to route through. Default: `default`.
+Sent on every REST request via the `cf-aig-gateway-id` header. Resolution precedence (highest to lowest):
 
-Sent on every request via model headers. Can be overridden per-model in `models.yml`.
+1. Per-model `headers.cf-aig-gateway-id` in `models.yml` — overrides everything for that model.
+2. `CLOUDFLARE_AI_GATEWAY_ID` env var.
+3. `CLOUDFLARE_AI_GATEWAY_GATEWAY_ID` env var (legacy alias).
+4. Hardcoded default `"default"`.
+
+Per-model override example:
+
+```yaml
+providers:
+  cloudflare-ai-gateway:
+    models:
+      anthropic/claude-opus-4-8:
+        headers:
+          cf-aig-gateway-id: my-routing-gateway
+```
+
+The legacy `gateway.ai.cloudflare.com` endpoint takes the gateway id from the URL path instead, so no `cf-aig-gateway-id` header is sent in that mode.
+
 
 ## Model Naming
 
