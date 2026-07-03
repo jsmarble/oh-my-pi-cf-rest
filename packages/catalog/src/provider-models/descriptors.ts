@@ -108,7 +108,7 @@ export const CATALOG_PROVIDERS = [
 	{
 		id: "cloudflare-ai-gateway",
 		defaultModel: "anthropic/claude-opus-4-8",
-		envVars: ["CLOUDFLARE_AI_GATEWAY_API_KEY"],
+		envVars: ["CLOUDFLARE_AI_GATEWAY_API_KEY", "CLOUDFLARE_API_TOKEN"],
 		createModelManagerOptions: (config: ModelManagerConfig) => cloudflareAiGatewayModelManagerOptions(config),
 		catalogDiscovery: { label: "Cloudflare AI Gateway" },
 	},

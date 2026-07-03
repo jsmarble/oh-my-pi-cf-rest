@@ -204,11 +204,10 @@ export function buildAnthropicHeaders(options: AnthropicHeaderOptions): Record<s
 	// modelHeaders so a case-insensitive spread can't produce duplicate keys; each
 	// branch re-adds the caller's value explicitly. User-Agent and X-Api-Key are
 	// always honored (with branch-specific defaults filling in when absent), while
-	// Authorization is honored for every non-OAuth, non-Cloudflare-gateway branch —
-	// OAuth requests MUST carry `Authorization: Bearer <oauth-token>` (the OAuth
-	// credential itself) and Cloudflare AI Gateway authenticates via
-	// `cf-aig-authorization`, so user-supplied auth there would just leak. Both of
-	// those cases drop + log the caller value (#3391).
+	// Authorization is honored for every non-OAuth branch. OAuth requests MUST
+	// carry `Authorization: Bearer <oauth-token>` (the OAuth credential itself),
+	// so user-supplied auth there would just leak. Both of those cases drop +
+	// log the caller value (#3391).
 	const incomingUserAgent = getHeaderCaseInsensitive(options.modelHeaders, "User-Agent");
 	const incomingAuthorization = getHeaderCaseInsensitive(options.modelHeaders, "Authorization");
 	const incomingApiKey = getHeaderCaseInsensitive(options.modelHeaders, "X-Api-Key");
@@ -220,9 +219,8 @@ export function buildAnthropicHeaders(options: AnthropicHeaderOptions): Record<s
 		extraBetas,
 	);
 	const acceptHeader = oauthToken ? "application/json" : stream ? "text/event-stream" : "application/json";
-	const isCloudflare = options.isCloudflareAiGateway ?? false;
-	const honorAuthorization = !oauthToken && !isCloudflare;
-	const honorApiKey = !isCloudflare;
+	const honorAuthorization = !oauthToken;
+	const honorApiKey = true;
 	const modelHeaders: Record<string, string> = {};
 	const filteredEnforcedKeys: string[] = [];
 	for (const [key, value] of Object.entries(options.modelHeaders ?? {})) {
@@ -246,17 +244,6 @@ export function buildAnthropicHeaders(options: AnthropicHeaderOptions): Record<s
 		logger.debug("anthropic: ignoring caller-supplied enforced headers", {
 			headers: filteredEnforcedKeys,
 		});
-	}
-
-	if (isCloudflare) {
-		return {
-			...modelHeaders,
-			Accept: acceptHeader,
-			...sharedHeaders,
-			...(incomingUserAgent ? { "User-Agent": incomingUserAgent } : {}),
-			...(betaHeader ? { "anthropic-beta": betaHeader } : {}),
-			"cf-aig-authorization": `Bearer ${options.apiKey}`,
-		};
 	}
 
 	if (oauthToken) {
@@ -2719,25 +2706,11 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 			headers,
 			dynamicHeaders,
 		),
-		isCloudflareAiGateway: model.provider === "cloudflare-ai-gateway",
 		claudeCodeSessionId,
 		claudeCodeBetas: oauthToken
 			? buildClaudeCodeBetas(hasTools || thinkingEnabled, thinkingEnabled, thinkingDisplay === "omitted")
 			: [],
 	});
-
-	if (model.provider === "cloudflare-ai-gateway") {
-		return {
-			isOAuthToken: false,
-			apiKey: null,
-			authToken: null,
-			baseURL: baseUrl,
-			maxRetries: 5,
-			defaultHeaders,
-			fetch: cchFetch,
-			fetchOptions,
-		};
-	}
 
 	// OpenCode Go and Umans validate Anthropic-compatible API-key auth through
 	// `X-Api-Key`; bearer-only requests reach the endpoint but fail auth.

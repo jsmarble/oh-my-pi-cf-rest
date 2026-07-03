@@ -572,39 +572,6 @@ function createSimpleOpenAIResponsesOptions(
 	};
 }
 
-function createSimpleAnthropicProviderOptions(
-	providerId: Parameters<typeof getBundledModels>[0],
-	defaultBaseUrlFallback: string,
-	config?: SimpleProviderConfig,
-): ModelManagerOptions<"anthropic-messages"> {
-	const apiKey = config?.apiKey;
-	const baseUrl = normalizeAnthropicBaseUrl(config?.baseUrl, defaultBaseUrlFallback);
-	const discoveryBaseUrl = toAnthropicDiscoveryBaseUrl(baseUrl);
-	const references = createBundledReferenceMap<"anthropic-messages">(providerId);
-	return {
-		providerId,
-		...(apiKey && {
-			fetchDynamicModels: () =>
-				fetchOpenAICompatibleModels({
-					api: "anthropic-messages",
-					provider: providerId,
-					baseUrl: discoveryBaseUrl,
-					headers: buildAnthropicDiscoveryHeaders(apiKey),
-					mapModel: (entry, defaults) => {
-						const reference = references.get(defaults.id);
-						const model = mapWithBundledReference(entry, defaults, reference);
-						return {
-							...model,
-							name: toModelName(entry.display_name, model.name),
-							baseUrl,
-						};
-					},
-					fetch: config?.fetch,
-				}),
-		}),
-	};
-}
-
 // ---------------------------------------------------------------------------
 // Umans AI Coding Plan
 // ---------------------------------------------------------------------------
@@ -2886,14 +2853,72 @@ export interface CloudflareAiGatewayModelManagerConfig {
 	fetch?: FetchImpl;
 }
 
+const CLOUDFLARE_AI_GATEWAY_PROVIDER_ID = "cloudflare-ai-gateway" as const;
+const CLOUDFLARE_AI_GATEWAY_DEFAULT_GATEWAY_ID = "default";
+const CLOUDFLARE_AI_GATEWAY_API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts";
+const CLOUDFLARE_AI_GATEWAY_FALLBACK_BASE_URL = `${CLOUDFLARE_AI_GATEWAY_API_BASE_URL}/<account>/ai/v1`;
+
+function getCloudflareAiGatewayAccountId(): string | undefined {
+	return Bun.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
+}
+
+function getCloudflareAiGatewayGatewayId(): string | undefined {
+	return (
+		Bun.env.CLOUDFLARE_AI_GATEWAY_ID?.trim() ||
+		Bun.env.CLOUDFLARE_AI_GATEWAY_GATEWAY_ID?.trim() ||
+		CLOUDFLARE_AI_GATEWAY_DEFAULT_GATEWAY_ID
+	);
+}
+
+function normalizeCloudflareAiGatewayRestBaseUrl(baseUrl: string | undefined): string {
+	if (baseUrl) {
+		return baseUrl.replace(/\/+$/, "");
+	}
+	const accountId = getCloudflareAiGatewayAccountId();
+	return accountId
+		? `${CLOUDFLARE_AI_GATEWAY_API_BASE_URL}/${accountId}/ai/v1`
+		: CLOUDFLARE_AI_GATEWAY_FALLBACK_BASE_URL;
+}
+
+function buildCloudflareAiGatewayHeaders(): Record<string, string> | undefined {
+	const gatewayId = getCloudflareAiGatewayGatewayId();
+	return gatewayId ? { "cf-aig-gateway-id": gatewayId } : undefined;
+}
+
+function mapCloudflareAiGatewayWireApi(modelId: string): Api {
+	const normalized = modelId.trim().toLowerCase();
+	if (normalized.startsWith("anthropic/") || normalized.startsWith("claude-") || normalized.startsWith("claude.")) {
+		return "anthropic-messages";
+	}
+	return "openai-completions";
+}
+
+function mapCloudflareAiGatewayRequestModelId(modelId: string): string {
+	return modelId.startsWith("workers-ai/") ? modelId.slice("workers-ai/".length) : modelId;
+}
+
+function remapCloudflareAiGatewayModel<TApi extends Api>(model: ModelSpec<TApi>, baseUrl: string): ModelSpec<Api> {
+	const requestModelId = mapCloudflareAiGatewayRequestModelId(model.id);
+	const headers = buildCloudflareAiGatewayHeaders();
+	return {
+		...model,
+		api: mapCloudflareAiGatewayWireApi(requestModelId),
+		baseUrl,
+		...(requestModelId !== model.id ? { requestModelId } : {}),
+		...(headers ? { headers: { ...(model.headers ?? {}), ...headers } } : {}),
+	};
+}
+
 export function cloudflareAiGatewayModelManagerOptions(
 	config?: CloudflareAiGatewayModelManagerConfig,
-): ModelManagerOptions<"anthropic-messages"> {
-	return createSimpleAnthropicProviderOptions(
-		"cloudflare-ai-gateway",
-		"https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/anthropic",
-		config,
-	);
+): ModelManagerOptions<Api> {
+	const baseUrl = normalizeCloudflareAiGatewayRestBaseUrl(config?.baseUrl);
+	return {
+		providerId: CLOUDFLARE_AI_GATEWAY_PROVIDER_ID,
+		staticModels: getBundledModels(CLOUDFLARE_AI_GATEWAY_PROVIDER_ID).map(model =>
+			remapCloudflareAiGatewayModel(model, baseUrl),
+		),
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -4266,10 +4291,22 @@ const MODELS_DEV_PROVIDER_DESCRIPTORS_SPECIALIZED: readonly ModelsDevProviderDes
 		},
 	}),
 	// --- Cloudflare AI Gateway ---
-	anthropicMessagesDescriptor(
+	openAiCompletionsDescriptor(
 		"cloudflare-ai-gateway",
 		"cloudflare-ai-gateway",
-		"https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/anthropic",
+		CLOUDFLARE_AI_GATEWAY_FALLBACK_BASE_URL,
+		{
+			filterModel: filterActiveToolCallModels,
+			resolveApi: modelId => {
+				const requestModelId = mapCloudflareAiGatewayRequestModelId(modelId);
+				return {
+					api: mapCloudflareAiGatewayWireApi(requestModelId),
+					baseUrl: CLOUDFLARE_AI_GATEWAY_FALLBACK_BASE_URL,
+				};
+			},
+			transformModel: model =>
+				remapCloudflareAiGatewayModel(model as ModelSpec<Api>, CLOUDFLARE_AI_GATEWAY_FALLBACK_BASE_URL),
+		},
 	),
 	// --- Mistral ---
 	openAiCompletionsDescriptor("mistral", "mistral", "https://api.mistral.ai/v1"),
