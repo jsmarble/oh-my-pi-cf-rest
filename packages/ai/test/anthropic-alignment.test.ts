@@ -2330,3 +2330,27 @@ describe("cch attestation", () => {
 		}
 	});
 });
+
+describe("Cloudflare AI Gateway legacy cf-aig-authorization branch", () => {
+	it("emits cf-aig-authorization (not Authorization) for legacy gateway.ai.cloudflare.com baseUrl", () => {
+		const headers = buildAnthropicHeaders({
+			apiKey: "cf-aig-test-token",
+			baseUrl: "https://gateway.ai.cloudflare.com/v1/acct/gw/anthropic",
+			isCloudflareAiGateway: true,
+			stream: false,
+		});
+		expect(headers["cf-aig-authorization"]).toBe("Bearer cf-aig-test-token");
+		expect(headers["Authorization"]).toBeUndefined();
+		expect(headers["X-Api-Key"]).toBeUndefined();
+	});
+
+	it("emits Authorization (not cf-aig-authorization) for the modern REST host", () => {
+		const headers = buildAnthropicHeaders({
+			apiKey: "v1.0-test-token",
+			baseUrl: "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1",
+			stream: false,
+		});
+		expect(headers["Authorization"]).toBe("Bearer v1.0-test-token");
+		expect(headers["cf-aig-authorization"]).toBeUndefined();
+	});
+});

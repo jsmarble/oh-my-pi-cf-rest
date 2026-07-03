@@ -2897,13 +2897,23 @@ function mapCloudflareAiGatewayRequestModelId(modelId: string): string {
 	return modelId.startsWith("workers-ai/") ? modelId.slice("workers-ai/".length) : modelId;
 }
 
+function isCloudflareLegacyBaseUrl(url: string | undefined): boolean {
+	if (!url) return false;
+	try {
+		return new URL(url).hostname.toLowerCase() === "gateway.ai.cloudflare.com";
+	} catch {
+		return false;
+	}
+}
+
 function remapCloudflareAiGatewayModel<TApi extends Api>(model: ModelSpec<TApi>, baseUrl: string): ModelSpec<Api> {
-	const requestModelId = mapCloudflareAiGatewayRequestModelId(model.id);
-	const headers = buildCloudflareAiGatewayHeaders();
+	const legacy = isCloudflareLegacyBaseUrl(baseUrl);
+	const requestModelId = legacy ? model.id : mapCloudflareAiGatewayRequestModelId(model.id);
+	const headers = legacy ? undefined : buildCloudflareAiGatewayHeaders();
 	return {
 		...model,
 		api: mapCloudflareAiGatewayWireApi(requestModelId),
-		baseUrl,
+		baseUrl: baseUrl.replace(/\/+$/, ""),
 		...(requestModelId !== model.id ? { requestModelId } : {}),
 		...(headers ? { headers: { ...(model.headers ?? {}), ...headers } } : {}),
 	};
@@ -4305,7 +4315,7 @@ const MODELS_DEV_PROVIDER_DESCRIPTORS_SPECIALIZED: readonly ModelsDevProviderDes
 				};
 			},
 			transformModel: model =>
-				remapCloudflareAiGatewayModel(model as ModelSpec<Api>, CLOUDFLARE_AI_GATEWAY_FALLBACK_BASE_URL),
+				remapCloudflareAiGatewayModel(model as ModelSpec<Api>, model.baseUrl),
 		},
 	),
 	// --- Mistral ---

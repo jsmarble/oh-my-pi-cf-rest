@@ -128,3 +128,27 @@ describe("Cloudflare AI Gateway REST provider support", () => {
 		});
 	});
 });
+
+describe("Cloudflare AI Gateway legacy gateway.ai.cloudflare.com compat", () => {
+	test("legacy baseUrl routes through the legacy branch (no workers-ai strip, no cf-aig-gateway-id header)", () => {
+		const legacyBaseUrl = "https://gateway.ai.cloudflare.com/v1/acct/gw/anthropic";
+		const options = cloudflareAiGatewayModelManagerOptions({ baseUrl: legacyBaseUrl });
+		const bundled = options.staticModels ?? getBundledModels("cloudflare-ai-gateway");
+		const anthropic = bundled.find(model => model.id === "anthropic/claude-sonnet-4-6");
+		const workers = bundled.find(model => model.id === "workers-ai/@cf/moonshotai/kimi-k2.6");
+
+		expect(anthropic).toMatchObject({
+			api: "anthropic-messages",
+			provider: "cloudflare-ai-gateway",
+			baseUrl: legacyBaseUrl,
+		});
+		// Legacy path: no cf-aig-gateway-id header injected (gateway id is in the URL).
+		expect(anthropic?.headers).toBeUndefined();
+		// Legacy path: workers-ai/ prefix preserved (legacy endpoint expects full id).
+		expect(workers).toMatchObject({
+			api: "openai-completions",
+			baseUrl: legacyBaseUrl,
+		});
+		expect(workers?.requestModelId).toBeUndefined();
+	});
+});

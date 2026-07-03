@@ -111,6 +111,20 @@ export function normalizeAnthropicBaseUrl(baseUrl?: string): string | undefined 
 	return withoutTrailingSlashes.endsWith("/v1") ? withoutTrailingSlashes.slice(0, -3) : withoutTrailingSlashes;
 }
 
+// Legacy Cloudflare AI Gateway (gateway.ai.cloudflare.com) authenticates via
+// `cf-aig-authorization` and carries the gateway id in the URL path; the modern
+// REST host (api.cloudflare.com) uses standard bearer auth plus the
+// `cf-aig-gateway-id` request header. Detect the legacy host so the request
+// builder can pick the right auth scheme.
+export function isCloudflareLegacyAnthropicBaseUrl(url: string | undefined): boolean {
+	if (!url) return false;
+	try {
+		return new URL(url).hostname.toLowerCase() === "gateway.ai.cloudflare.com";
+	} catch {
+		return false;
+	}
+}
+
 // Build deduplicated beta header string
 export function buildBetaHeader(baseBetas: readonly string[], extraBetas: readonly string[]): string {
 	const seen = new Set<string>();
@@ -204,10 +218,11 @@ export function buildAnthropicHeaders(options: AnthropicHeaderOptions): Record<s
 	// modelHeaders so a case-insensitive spread can't produce duplicate keys; each
 	// branch re-adds the caller's value explicitly. User-Agent and X-Api-Key are
 	// always honored (with branch-specific defaults filling in when absent), while
-	// Authorization is honored for every non-OAuth branch. OAuth requests MUST
-	// carry `Authorization: Bearer <oauth-token>` (the OAuth credential itself),
-	// so user-supplied auth there would just leak. Both of those cases drop +
-	// log the caller value (#3391).
+	// Authorization is honored for every non-OAuth, non-Cloudflare-gateway branch —
+	// OAuth requests MUST carry `Authorization: Bearer <oauth-token>` (the OAuth
+	// credential itself) and Cloudflare AI Gateway authenticates via
+	// `cf-aig-authorization`, so user-supplied auth there would just leak. Both of
+	// those cases drop + log the caller value (#3391).
 	const incomingUserAgent = getHeaderCaseInsensitive(options.modelHeaders, "User-Agent");
 	const incomingAuthorization = getHeaderCaseInsensitive(options.modelHeaders, "Authorization");
 	const incomingApiKey = getHeaderCaseInsensitive(options.modelHeaders, "X-Api-Key");
@@ -219,8 +234,9 @@ export function buildAnthropicHeaders(options: AnthropicHeaderOptions): Record<s
 		extraBetas,
 	);
 	const acceptHeader = oauthToken ? "application/json" : stream ? "text/event-stream" : "application/json";
-	const honorAuthorization = !oauthToken;
-	const honorApiKey = true;
+	const isCloudflare = options.isCloudflareAiGateway ?? false;
+	const honorAuthorization = !oauthToken && !isCloudflare;
+	const honorApiKey = !isCloudflare;
 	const modelHeaders: Record<string, string> = {};
 	const filteredEnforcedKeys: string[] = [];
 	for (const [key, value] of Object.entries(options.modelHeaders ?? {})) {
@@ -262,17 +278,27 @@ export function buildAnthropicHeaders(options: AnthropicHeaderOptions): Record<s
 			"User-Agent": userAgent,
 			...(incomingApiKey ? { "X-Api-Key": incomingApiKey } : {}),
 		};
-	} else if (!isOfficialAnthropicApiUrl(options.baseUrl)) {
+} else if (!isOfficialAnthropicApiUrl(options.baseUrl)) {
+	if (isCloudflare) {
 		return {
 			...modelHeaders,
 			Accept: acceptHeader,
-			Authorization: incomingAuthorization ?? `Bearer ${options.apiKey}`,
 			...sharedHeaders,
 			...(incomingUserAgent ? { "User-Agent": incomingUserAgent } : {}),
 			...(betaHeader ? { "anthropic-beta": betaHeader } : {}),
-			...(incomingApiKey ? { "X-Api-Key": incomingApiKey } : {}),
+			"cf-aig-authorization": `Bearer ${options.apiKey}`,
 		};
-	} else {
+	}
+	return {
+		...modelHeaders,
+		Accept: acceptHeader,
+		Authorization: incomingAuthorization ?? `Bearer ${options.apiKey}`,
+		...sharedHeaders,
+		...(incomingUserAgent ? { "User-Agent": incomingUserAgent } : {}),
+		...(betaHeader ? { "anthropic-beta": betaHeader } : {}),
+		...(incomingApiKey ? { "X-Api-Key": incomingApiKey } : {}),
+	};
+} else {
 		return {
 			...modelHeaders,
 			Accept: acceptHeader,
@@ -2693,24 +2719,45 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 		betaFeatures.push(interleavedThinkingBeta);
 	}
 
-	const defaultHeaders = buildAnthropicHeaders({
-		apiKey,
-		baseUrl,
-		isOAuth: oauthToken,
-		extraBetas: betaFeatures,
-		stream,
-		modelHeaders: mergeHeaders(
-			model.headers,
-			foundryCustomHeaders,
-			getUmansWebSearchHeader(model, mergeHeaders(model.headers, headers)),
-			headers,
-			dynamicHeaders,
-		),
-		claudeCodeSessionId,
-		claudeCodeBetas: oauthToken
-			? buildClaudeCodeBetas(hasTools || thinkingEnabled, thinkingEnabled, thinkingDisplay === "omitted")
-			: [],
-	});
+const isCloudflareLegacyGateway =
+	model.provider === "cloudflare-ai-gateway" && isCloudflareLegacyAnthropicBaseUrl(baseUrl);
+
+const defaultHeaders = buildAnthropicHeaders({
+	apiKey,
+	baseUrl,
+	isOAuth: oauthToken,
+	isCloudflareAiGateway: isCloudflareLegacyGateway,
+	extraBetas: betaFeatures,
+	stream,
+	modelHeaders: mergeHeaders(
+		model.headers,
+		foundryCustomHeaders,
+		getUmansWebSearchHeader(model, mergeHeaders(model.headers, headers)),
+		headers,
+		dynamicHeaders,
+	),
+	claudeCodeSessionId,
+	claudeCodeBetas: oauthToken
+		? buildClaudeCodeBetas(hasTools || thinkingEnabled, thinkingEnabled, thinkingDisplay === "omitted")
+		: [],
+});
+
+// Legacy Cloudflare AI Gateway (gateway.ai.cloudflare.com) takes the API key
+// via `cf-aig-authorization` (set in buildAnthropicHeaders above) and never
+// via `Authorization` / `X-Api-Key`; dropping the client-level credential
+// fields prevents the SDK from re-injecting a competing auth header.
+if (isCloudflareLegacyGateway) {
+	return {
+		isOAuthToken: false,
+		apiKey: null,
+		authToken: null,
+		baseURL: baseUrl,
+		maxRetries: 5,
+		defaultHeaders,
+		fetch: cchFetch,
+		fetchOptions,
+	};
+}
 
 	// OpenCode Go and Umans validate Anthropic-compatible API-key auth through
 	// `X-Api-Key`; bearer-only requests reach the endpoint but fail auth.
