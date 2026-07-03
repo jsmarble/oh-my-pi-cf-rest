@@ -46,3 +46,17 @@ export class LoginCancelledError extends Error {
 		attach(this, create(Flag.Abort));
 	}
 }
+
+/**
+ * A user pasted a legacy Cloudflare AI Gateway token (`cf-aig-…`) at the
+ * modern REST API login prompt. Legacy tokens are scoped to
+ * `gateway.ai.cloudflare.com` and will 401 against `api.cloudflare.com`; the
+ * login rejects them up front rather than failing at request time.
+ */
+export class LegacyCloudflareTokenError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "LegacyCloudflareTokenError";
+		attach(this, create(Flag.AuthFailed));
+	}
+}
